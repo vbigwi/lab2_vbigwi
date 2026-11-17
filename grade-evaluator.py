@@ -3,115 +3,194 @@ import csv
 import os
 import sys
 
-REQUIRED_FIELDS = ("assignment", "group", "score", "weight")
-VALID_GROUPS = ("Formative", "Summative")
-FORMATIVE_WEIGHT = 60.0
-SUMMATIVE_WEIGHT = 40.0
-TOTAL_WEIGHT = 100.0
-PASS_MARK = 50.0
+COLUMNS = ["assignment", "group", "score", "weight"]
+GROUPS = ["Formative", "Summative"]
+FORMATIVE_WEIGHT = 60
+SUMMATIVE_WEIGHT = 40
+TOTAL_WEIGHT = 100
+PASS_MARK = 50
 
 
 def show_error(message):
-    print(f"Error: {message}")
+    print("Error: " + message)
     sys.exit(1)
+
+
+def ask_for_filename():
+    filename = input("Enter the name of the CSV file to process (e.g., grades.csv): ")
+    filename = filename.strip()
+    if filename == "":
+        show_error("no filename was entered, please type the name of a CSV file.")
+    if not os.path.exists(filename):
+        show_error("the file '" + filename + "' was not found.")
+    if not os.path.isfile(filename):
+        show_error("'" + filename + "' is not a file.")
+    return filename
+
+
+def check_header(reader, filename):
+    if reader.fieldnames is None:
+        show_error("the file '" + filename + "' is empty.")
+    for column in COLUMNS:
+        if column not in reader.fieldnames:
+            show_error("the CSV header is missing the column '" + column + "'. "
+                       "Expected columns: " + ", ".join(COLUMNS) + ".")
+
+
+def row_is_blank(row):
+    for column in COLUMNS:
+        value = row.get(column)
+        if value is not None and value.strip() != "":
+            return False
+    return True
+
+
+def to_number(value, what, line):
+    try:
+        return float(value)
+    except ValueError:
+        show_error("line " + str(line) + ": " + what + " must be a number, got '" + value + "'.")
+
+
+def read_row(row, line):
+    name = (row.get("assignment") or "").strip()
+    group = (row.get("group") or "").strip()
+    score = (row.get("score") or "").strip()
+    weight = (row.get("weight") or "").strip()
+
+    if name == "":
+        show_error("line " + str(line) + ": the assignment name is empty.")
+    if group not in GROUPS:
+        show_error("line " + str(line) + " (" + name + "): group must be Formative "
+                   "or Summative, got '" + group + "'.")
+
+    return {
+        "assignment": name,
+        "group": group,
+        "score": to_number(score, "score", line),
+        "weight": to_number(weight, "weight", line),
+    }
 
 
 def load_csv_data():
     """
     Prompts the user for a filename, checks if it exists,
     and extracts all fields into a list of dictionaries.
-
-    Every row is validated while it is read: the four columns must be
-    present, the group must be Formative or Summative, and the score and
-    weight must be numbers. Completely empty rows are skipped.
     """
-    filename = input("Enter the name of the CSV file to process (e.g., grades.csv): ").strip()
-
-    if filename == "":
-        show_error("No filename was entered. Please type the name of a CSV file.")
-    if not os.path.exists(filename):
-        show_error(f"The file '{filename}' was not found.")
-    if not os.path.isfile(filename):
-        show_error(f"'{filename}' is not a file.")
-
+    filename = ask_for_filename()
     assignments = []
 
     try:
-        with open(filename, mode='r', encoding='utf-8') as file:
+        with open(filename, mode="r", encoding="utf-8") as file:
             reader = csv.DictReader(file)
-            if reader.fieldnames is None:
-                show_error(f"The file '{filename}' is empty.")
-            missing = [f for f in REQUIRED_FIELDS if f not in reader.fieldnames]
-            if missing:
-                show_error(f"The CSV header is missing the column(s): {', '.join(missing)}. "
-                     f"Expected columns: {', '.join(REQUIRED_FIELDS)}.")
-
-            for line_number, row in enumerate(reader, start=2):
-                values = [(row.get(f) or "").strip() for f in REQUIRED_FIELDS]
-                if all(v == "" for v in values):
+            check_header(reader, filename)
+            line = 1
+            for row in reader:
+                line = line + 1
+                if row_is_blank(row):
                     continue
-                name, group, score, weight = values
-                if name == "":
-                    show_error(f"Line {line_number}: the assignment name is empty.")
-                if group not in VALID_GROUPS:
-                    show_error(f"Line {line_number} ('{name}'): group must be Formative or "
-                         f"Summative, got '{group}'.")
-                try:
-                    score = float(score)
-                except ValueError:
-                    show_error(f"Line {line_number} ('{name}'): score must be a number, got '{score}'.")
-                try:
-                    weight = float(weight)
-                except ValueError:
-                    show_error(f"Line {line_number} ('{name}'): weight must be a number, got '{weight}'.")
-                assignments.append({
-                    'assignment': name,
-                    'group': group,
-                    'score': score,
-                    'weight': weight
-                })
-    except OSError as e:
-        show_error(f"An error occurred while reading the file: {e}")
+                assignments.append(read_row(row, line))
+    except OSError as error:
+        show_error("the file could not be read: " + str(error))
     except UnicodeDecodeError:
-        show_error(f"'{filename}' is not a readable text file (expected UTF-8 CSV).")
+        show_error("'" + filename + "' is not a readable text file (expected a UTF-8 CSV).")
 
-    if not assignments:
-        show_error(f"The file '{filename}' contains no assignment rows.")
+    if len(assignments) == 0:
+        show_error("the file '" + filename + "' contains no assignment rows.")
     return assignments
 
 
 def check_scores(data):
-    problems = [f"  - {a['assignment']}: {a['score']:g}"
-                for a in data if not 0 <= a['score'] <= 100]
-    if problems:
-        show_error("every score must be between 0 and 100. Out of range:\n" + "\n".join(problems))
+    bad_scores = []
+    for item in data:
+        if item["score"] < 0 or item["score"] > 100:
+            bad_scores.append("  - " + item["assignment"] + ": " + str(item["score"]))
+    if len(bad_scores) > 0:
+        show_error("every score must be between 0 and 100. Out of range:\n" + "\n".join(bad_scores))
     print("Score check: all scores are within 0-100.")
 
 
-def check_weights(data):
-    negative = [a['assignment'] for a in data if a['weight'] < 0]
-    if negative:
-        show_error("weights cannot be negative: " + ", ".join(negative))
+def sum_weights(data, group):
+    total = 0
+    for item in data:
+        if item["group"] == group:
+            total = total + item["weight"]
+    return total
 
-    formative = sum(a['weight'] for a in data if a['group'] == "Formative")
-    summative = sum(a['weight'] for a in data if a['group'] == "Summative")
+
+def check_weights(data):
+    for item in data:
+        if item["weight"] < 0:
+            show_error("the weight of '" + item["assignment"] + "' is negative.")
+
+    formative = sum_weights(data, "Formative")
+    summative = sum_weights(data, "Summative")
     total = formative + summative
 
     problems = []
-    if abs(total - TOTAL_WEIGHT) > 1e-9:
-        problems.append(f"total weight is {total:g}, it must be exactly {TOTAL_WEIGHT:g}")
-    if abs(formative - FORMATIVE_WEIGHT) > 1e-9:
-        problems.append(f"Formative weights add up to {formative:g}, they must be exactly {FORMATIVE_WEIGHT:g}")
-    if abs(summative - SUMMATIVE_WEIGHT) > 1e-9:
-        problems.append(f"Summative weights add up to {summative:g}, they must be exactly {SUMMATIVE_WEIGHT:g}")
-    if problems:
+    if total != TOTAL_WEIGHT:
+        problems.append("total weight is " + str(total) + ", it must be exactly " + str(TOTAL_WEIGHT))
+    if formative != FORMATIVE_WEIGHT:
+        problems.append("Formative weights add up to " + str(formative) + ", they must be exactly " + str(FORMATIVE_WEIGHT))
+    if summative != SUMMATIVE_WEIGHT:
+        problems.append("Summative weights add up to " + str(summative) + ", they must be exactly " + str(SUMMATIVE_WEIGHT))
+    if len(problems) > 0:
         show_error("invalid weights:\n  - " + "\n  - ".join(problems))
-    print(f"Weight check: Formative = {formative:g}, Summative = {summative:g}, Total = {total:g}.")
+    print("Weight check: Formative = " + str(formative) + ", Summative = " + str(summative) + ", Total = " + str(total) + ".")
 
 
-def get_points(data, group=None):
-    return sum(a['score'] * a['weight'] / 100.0
-               for a in data if group is None or a['group'] == group)
+def points_for(item):
+    return item["score"] * item["weight"] / 100
+
+
+def sum_points(data, group):
+    total = 0
+    for item in data:
+        if item["group"] == group:
+            total = total + points_for(item)
+    return total
+
+
+def print_transcript(data):
+    print("\n--- Transcript ---")
+    print(f"{'Assignment':<38} {'Group':<10} {'Score':>6} {'Weight':>7} {'Points':>7}")
+    for item in data:
+        print(f"{item['assignment']:<38} {item['group']:<10} {item['score']:>6.1f} "
+              f"{item['weight']:>7.1f} {points_for(item):>7.2f}")
+
+
+def find_failed_formatives(data):
+    failed = []
+    for item in data:
+        if item["group"] == "Formative" and item["score"] < PASS_MARK:
+            failed.append(item)
+    return failed
+
+
+def find_resubmissions(failed):
+    if len(failed) == 0:
+        return []
+    highest_weight = failed[0]["weight"]
+    for item in failed:
+        if item["weight"] > highest_weight:
+            highest_weight = item["weight"]
+    resubmissions = []
+    for item in failed:
+        if item["weight"] == highest_weight:
+            resubmissions.append(item)
+    return resubmissions
+
+
+def print_resubmissions(failed, resubmissions):
+    if len(failed) == 0:
+        print("\nNo formative assignment needs to be resubmitted.")
+        return
+    print("\nFailed formative assignments (below " + str(PASS_MARK) + "%):")
+    for item in failed:
+        print("  - " + item["assignment"] + " (score " + str(item["score"]) + "%, weight " + str(item["weight"]) + ")")
+    print("\nEligible for resubmission (highest weight = " + str(resubmissions[0]["weight"]) + "):")
+    for item in resubmissions:
+        print("  * " + item["assignment"])
 
 
 def evaluate_grades(data):
@@ -119,67 +198,41 @@ def evaluate_grades(data):
     'data' is a list of dictionaries containing the assignment records.
     """
     print("\n--- Processing Grades ---")
-
     check_scores(data)
-
     check_weights(data)
 
-    formative_total = get_points(data, "Formative")
-    summative_total = get_points(data, "Summative")
-    final_grade = formative_total + summative_total
-    gpa = (final_grade / 100.0) * 5.0
+    formative_points = sum_points(data, "Formative")
+    summative_points = sum_points(data, "Summative")
+    final_grade = formative_points + summative_points
+    gpa = (final_grade / 100) * 5.0
 
-    formative_pct = formative_total / FORMATIVE_WEIGHT * 100.0
-    summative_pct = summative_total / SUMMATIVE_WEIGHT * 100.0
+    formative_percent = formative_points / FORMATIVE_WEIGHT * 100
+    summative_percent = summative_points / SUMMATIVE_WEIGHT * 100
 
-    print("\n--- Transcript ---")
-    print(f"{'Assignment':<38} {'Group':<10} {'Score':>6} {'Weight':>7} {'Points':>7}")
-    for a in data:
-        points = a['score'] * a['weight'] / 100.0
-        print(f"{a['assignment']:<38} {a['group']:<10} {a['score']:>6.1f} "
-              f"{a['weight']:>7.1f} {points:>7.2f}")
-    print(f"\nFormative total: {formative_total:.2f} / {FORMATIVE_WEIGHT:g}  ({formative_pct:.2f}%)")
-    print(f"Summative total: {summative_total:.2f} / {SUMMATIVE_WEIGHT:g}  ({summative_pct:.2f}%)")
+    print_transcript(data)
+    print(f"\nFormative total: {formative_points:.2f} / {FORMATIVE_WEIGHT}  ({formative_percent:.2f}%)")
+    print(f"Summative total: {summative_points:.2f} / {SUMMATIVE_WEIGHT}  ({summative_percent:.2f}%)")
     print(f"Final grade:     {final_grade:.2f} / 100")
     print(f"GPA:             {gpa:.2f} / 5.0")
 
-    formative_passed = formative_pct >= PASS_MARK
-    summative_passed = summative_pct >= PASS_MARK
-    passed = formative_passed and summative_passed
+    formative_ok = formative_percent >= PASS_MARK
+    summative_ok = summative_percent >= PASS_MARK
 
     print("\n--- Category Results ---")
-    print(f"Formative: {formative_pct:.2f}% -> {'pass' if formative_passed else 'FAIL'} (need {PASS_MARK:g}%)")
-    print(f"Summative: {summative_pct:.2f}% -> {'pass' if summative_passed else 'FAIL'} (need {PASS_MARK:g}%)")
-
-    failed_formatives = [a for a in data
-                         if a['group'] == "Formative" and a['score'] < PASS_MARK]
-    resubmission = []
-    if failed_formatives:
-        highest_weight = failed_formatives[0]['weight']
-        for a in failed_formatives:
-            if a['weight'] > highest_weight:
-                highest_weight = a['weight']
-        resubmission = [a for a in failed_formatives if a['weight'] == highest_weight]
+    print("Formative: " + f"{formative_percent:.2f}" + "% -> " + ("pass" if formative_ok else "FAIL"))
+    print("Summative: " + f"{summative_percent:.2f}" + "% -> " + ("pass" if summative_ok else "FAIL"))
 
     print("\n--- Final Decision ---")
-    print("PASSED" if passed else "FAILED")
-
-    if failed_formatives:
-        print(f"\nFailed formative assignments (below {PASS_MARK:g}%):")
-        for a in failed_formatives:
-            print(f"  - {a['assignment']} (score {a['score']:g}%, weight {a['weight']:g})")
-        label = "assignment is" if len(resubmission) == 1 else "assignments are"
-        print(f"\nEligible for resubmission (highest weight = {resubmission[0]['weight']:g}), "
-              f"the following {label}:")
-        for a in resubmission:
-            print(f"  * {a['assignment']}")
+    if formative_ok and summative_ok:
+        print("PASSED")
     else:
-        print("\nNo formative assignment needs to be resubmitted.")
+        print("FAILED")
 
-    return passed
+    failed = find_failed_formatives(data)
+    resubmissions = find_resubmissions(failed)
+    print_resubmissions(failed, resubmissions)
 
 
 if __name__ == "__main__":
     course_data = load_csv_data()
-
     evaluate_grades(course_data)
